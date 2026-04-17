@@ -1,0 +1,56 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: avhita
+      POSTGRES_PASSWORD: avhita
+      POSTGRES_DB: avhita
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  clinic-ehr:
+    build: ./services/clinic-ehr
+    ports:
+      - "8001:8000"
+    env_file: ./services/clinic-ehr/.env.example
+    depends_on:
+      - postgres
+      - redis
+
+  rpm-bridge:
+    build: ./services/rpm-bridge
+    ports:
+      - "8002:8000"
+    env_file: ./services/rpm-bridge/.env.example
+    depends_on:
+      - postgres
+      - redis
+      - clinic-ehr
+
+  intelligence:
+    build: ./services/intelligence
+    ports:
+      - "8003:8000"
+    env_file: ./services/intelligence/.env.example
+    depends_on:
+      - postgres
+
+  abdm-gateway:
+    build: ./services/abdm-gateway
+    ports:
+      - "8004:8000"
+    env_file: ./services/abdm-gateway/.env.example
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:
