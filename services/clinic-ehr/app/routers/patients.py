@@ -1,0 +1,79 @@
+import uuid
+from datetime import datetime, UTC
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import models as db
+from app.db.session import get_db
+from app.models.patient import PatientProfile, PatientRegisterRequest, TimelineEvent
+from app.services.abha import verify_with_nha
+
+router = APIRouter(tags=["patients"])
+
+
+@router.post(
+    "/register",
+    response_model=PatientProfile,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register_patient(
+    body: PatientRegisterRequest,
+    session: AsyncSession = Depends(get_db),
+) -> PatientProfile:
+    if body.abha_id:
+        existing = await session.scalar(
+            select(db.Patient).where(db.Patient.abha_id == body.abha_id)
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail="ABHA ID already registered")
+
+        if not await verify_with_nha(body.abha_id):
+            raise HTTPException(status_code=422, detail="ABHA ID could not be verified with NHA")
+
+    patient = db.Patient(
+        id=str(uuid.uuid4()),
+        abha_id=body.abha_id,
+        family_name=body.family_name,
+        given_names=body.given_names,
+        dob=body.dob,
+        gender=body.gender.value,
+        blood_group=body.blood_group.value if body.blood_group else None,
+        emergency_contact=body.emergency_contact.model_dump() if body.emergency_contact else None,
+        primary_cardiologist_id=body.primary_cardiologist_id,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    session.add(patient)
+    await session.commit()
+    await session.refresh(patient)
+    return PatientProfile.model_validate(patient)
+
+
+@router.get("/{patient_id}", response_model=PatientProfile)
+async def get_patient(
+    patient_id: str,
+    session: AsyncSession = Depends(get_db),
+) -> PatientProfile:
+    patient = await session.get(db.Patient, patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return PatientProfile.model_validate(patient)
+
+
+@router.get("/{patient_id}/timeline", response_model=list[TimelineEvent])
+async def get_patient_timeline(
+    patient_id: str,
+    session: AsyncSession = Depends(get_db),
+) -> list[TimelineEvent]:
+    patient = await session.get(db.Patient, patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    result = await session.execute(
+        select(db.TimelineEvent)
+        .where(db.TimelineEvent.patient_id == patient_id)
+        .order_by(db.TimelineEvent.timestamp)
+    )
+    return [TimelineEvent.model_validate(e) for e in result.scalars().all()]
