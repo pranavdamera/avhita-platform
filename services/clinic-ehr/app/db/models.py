@@ -1,7 +1,8 @@
 """
-SQLAlchemy ORM models mirroring FHIR R4 Patient and Observation resources.
+SQLAlchemy ORM models mirroring FHIR R4 resources.
 
-Patient   → FHIR Patient (https://hl7.org/fhir/R4/patient.html)
+Practitioner → FHIR Practitioner (https://hl7.org/fhir/R4/practitioner.html)
+Patient       → FHIR Patient     (https://hl7.org/fhir/R4/patient.html)
 TimelineEvent → FHIR Observation / AuditEvent (category-keyed composite)
 """
 import uuid
@@ -15,17 +16,46 @@ class Base(DeclarativeBase):
     pass
 
 
+class Practitioner(Base):
+    """FHIR R4 Practitioner resource.
+
+      id                          → Practitioner.id
+      registration_number         → Practitioner.identifier[system=nmc:registration]
+      family_name                 → Practitioner.name[use=official].family
+      given_names (JSON list)     → Practitioner.name[use=official].given
+      specialty                   → Practitioner.qualification[0].code (text)
+      qualification (JSON list)   → Practitioner.qualification[*].code.text
+    """
+
+    __tablename__ = "practitioners"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    registration_number = Column(String(50), unique=True, nullable=True, index=True)
+    family_name = Column(String(255), nullable=False)
+    given_names = Column(JSON, nullable=False)  # list[str]
+    specialty = Column(String(100), nullable=True)
+    qualification = Column(JSON, nullable=True)  # list[str]
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
+
+    patients = relationship(
+        "Patient",
+        back_populates="primary_cardiologist",
+        foreign_keys="Patient.primary_cardiologist_id",
+    )
+
+
 class Patient(Base):
     """FHIR R4 Patient resource.
 
-    Notable FHIR mappings:
       id                       → Patient.id
       abha_id                  → Patient.identifier[system=abdm:abha]
       family_name              → Patient.name[use=official].family
       given_names (JSON list)  → Patient.name[use=official].given
       dob                      → Patient.birthDate
       gender                   → Patient.gender
-      blood_group              → Patient.extension[blood-group]  (NCP extension)
+      blood_group              → Patient.extension[blood-group] (NCP extension)
       emergency_contact (JSON) → Patient.contact
       primary_cardiologist_id  → Patient.generalPractitioner[0]
     """
@@ -40,11 +70,20 @@ class Patient(Base):
     gender = Column(String(10), nullable=False)  # male|female|other|unknown
     blood_group = Column(String(5), nullable=True)
     emergency_contact = Column(JSON, nullable=True)  # EmergencyContact dict
-    primary_cardiologist_id = Column(String(36), nullable=True)
+    primary_cardiologist_id = Column(
+        String(36),
+        ForeignKey("practitioners.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
 
+    primary_cardiologist = relationship(
+        "Practitioner",
+        back_populates="patients",
+        foreign_keys=[primary_cardiologist_id],
+    )
     timeline_events = relationship(
         "TimelineEvent",
         back_populates="patient",
@@ -54,9 +93,6 @@ class Patient(Base):
 
 class TimelineEvent(Base):
     """Composite FHIR resource representing a patient timeline entry.
-
-    Maps to FHIR Observation (lab/ecg/alert/rpm) or DocumentReference
-    (document/consultation), categorised by event_type.
 
       patient_id      → Observation.subject
       event_type      → Observation.category.code
@@ -70,7 +106,10 @@ class TimelineEvent(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     patient_id = Column(
-        String(36), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     event_type = Column(String(20), nullable=False)  # EventTypeEnum values
     timestamp = Column(DateTime, nullable=False)

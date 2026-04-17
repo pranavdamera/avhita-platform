@@ -75,6 +75,14 @@ class PatientProfile(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TimelineEventCreate(BaseModel):
+    event_type: EventTypeEnum
+    timestamp: datetime
+    source_service: str
+    structured_data: Optional[dict[str, Any]] = None
+    summary_text: Optional[str] = None
+
+
 class TimelineEvent(BaseModel):
     id: str
     patient_id: str
